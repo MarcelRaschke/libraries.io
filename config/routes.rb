@@ -1,5 +1,6 @@
 Rails.application.routes.draw do
   require 'sidekiq/web'
+  require 'sidekiq_unique_jobs/web'
   Sidekiq::Web.use Rack::Auth::Basic do |username, password|
     username == ENV["SIDEKIQ_USERNAME"] && password == ENV["SIDEKIQ_PASSWORD"]
   end if Rails.env.production?
@@ -7,12 +8,13 @@ Rails.application.routes.draw do
 
   mount PgHero::Engine, at: "pghero"
 
+  get "/healthcheck", to: "healthcheck#index", as: :healthcheck
   get '/home', to: 'dashboard#home'
 
-  namespace :api do
+  namespace :api, defaults: { format: :json }  do
     post '/check', to: 'status#check'
 
-    get '/', to: 'docs#index'
+    get '/', to: 'docs#index', defaults: { format: :html }
     get '/search', to: 'search#index'
     get '/bower-search', to: 'bower_search#index'
     get '/searchcode', to: 'projects#searchcode'
@@ -32,11 +34,9 @@ Rails.application.routes.draw do
     delete '/subscription/:platform/:name', to: 'subscriptions#destroy'
 
     post '/projects/dependencies', to: 'projects#dependencies_bulk'
+    get '/projects/updated', to: 'projects#updated'
 
     scope constraints: {host_type: /(github|gitlab|bitbucket)/i}, defaults: { host_type: 'github' } do
-      get '/:host_type/issues/help-wanted', to: 'issues#help_wanted'
-      get '/:host_type/issues/first-pull-request', to: 'issues#first_pull_request'
-
       get '/:host_type/search', to: 'repositories#search'
 
       get '/:host_type/:login/dependencies', to: 'repository_users#dependencies'
@@ -55,6 +55,10 @@ Rails.application.routes.draw do
     PLATFORM_CONSTRAINT = /[\w\-]+/
     PROJECT_CONSTRAINT = /[^\/]+/
     VERSION_CONSTRAINT = /[\w\.\-]+/
+
+    put '/maintenance/stats/enqueue/:platform/:name', as: :maintenance_stat_enqueue, to: 'maintenance_stats#enqueue', constraints: { :platform => PLATFORM_CONSTRAINT, :name => PROJECT_CONSTRAINT }
+    post '/maintenance/stats/begin/bulk', to: 'maintenance_stats#begin_watching_bulk'
+    get '/maintenance/stats/begin/:platform/:name', to: 'maintenance_stats#begin_watching', constraints: { :platform => PLATFORM_CONSTRAINT, :name => PROJECT_CONSTRAINT }
 
     get '/:platform/:name/usage', to: 'project_usage#show', as: :project_usage, constraints: { :platform => PLATFORM_CONSTRAINT, :name => PROJECT_CONSTRAINT }
     get '/:platform/:name/sourcerank', to: 'projects#sourcerank', constraints: { :platform => PLATFORM_CONSTRAINT, :name => PROJECT_CONSTRAINT }
@@ -96,6 +100,7 @@ Rails.application.routes.draw do
     get '/:host_type/:login/dependencies', to: 'repository_organisations#dependencies', as: :organisation_dependencies
     delete '/:host_type/:login', to: 'repository_organisations#destroy'
     patch '/:host_type/:login', to: 'repository_organisations#update'
+    post '/:host_type/:login/hide', to: 'repository_organisations#hide', as: :hide_owner
     get '/:host_type/:login/edit', to: 'repository_organisations#edit', as: :edit_owner
     get '/:host_type/:login', to: 'repository_organisations#show', as: :organisation
     get '/', to: 'stats#overview', as: :overview
@@ -125,9 +130,10 @@ Rails.application.routes.draw do
 
   root to: 'projects#index'
 
-  get '/404', to: 'errors#not_found'
-  get '/422', to: 'errors#unprocessable'
-  get '/500', to: 'errors#internal'
+  match '/404', to: 'errors#not_found', via: :all
+  match '/406', to: 'errors#not_acceptable', via: :all
+  match '/422', to: 'errors#unprocessable', via: :all
+  match '/500', to: 'errors#internal', via: :all
 
   resources :licenses, constraints: { :id => /.*/ }, :defaults => { :format => 'html' }
   resources :languages
@@ -138,27 +144,9 @@ Rails.application.routes.draw do
 
   get '/stats', to: redirect('/admin/stats')
 
-  #explore
-  get '/explore/unlicensed-libraries', to: 'projects#unlicensed', as: :unlicensed
-  get '/explore/unmaintained-libraries', to: 'projects#unmaintained', as: :unmaintained
-  get '/explore/deprecated-libraries', to: 'projects#deprecated', as: :deprecated
-  get '/explore/removed-libraries', to: 'projects#removed', as: :removed
-  get '/explore/help-wanted', to: 'issues#help_wanted', as: :help_wanted
-  get '/explore/first-pull-request', to: 'issues#first_pull_request', as: :first_pull_request
-  get '/explore/issues', to: 'issues#index', as: :all_issues
-  get '/unlicensed-libraries', to: redirect("/explore/unlicensed-libraries")
-  get 'unmaintained-libraries', to: redirect("/explore/unmaintained-libraries")
-  get 'deprecated-libraries', to: redirect("/explore/deprecated-libraries")
-  get 'removed-libraries', to: redirect("/explore/removed-libraries")
-  get '/help-wanted', to: redirect("/explore/help-wanted")
-  get '/first-pull-request', to: redirect("/explore/first-pull-request")
-
   get '/platforms', to: 'platforms#index', as: :platforms
 
   scope constraints: {host_type: /(github|gitlab|bitbucket)/i}, defaults: { host_type: 'github' } do
-    get '/:host_type/issues', to: 'issues#index', as: :issues
-    get '/:host_type/issues/your-dependencies', to: 'issues#your_dependencies', as: :your_dependencies_issues
-
     post '/hooks/:host_type', to: 'hooks#github'
 
     get '/:host_type/languages', to: 'repositories#languages', as: :github_languages
@@ -166,10 +154,7 @@ Rails.application.routes.draw do
     get '/:host_type/trending', to: 'repositories#hacker_news', as: :trending
     get '/:host_type/new', to: 'repositories#new', as: :new_repos
     get '/:host_type/organisations', to: 'repository_organisations#index', as: :repository_organisations
-    get '/:host_type/timeline', to: 'repositories#timeline', as: :github_timeline
-    get '/:host_type/:login/issues', to: 'repository_users#issues'
     get '/:host_type/:login/dependencies', to: 'repository_users#dependencies', as: :user_dependencies
-    get '/:host_type/:login/dependency-issues', to: 'repository_users#dependency_issues'
     get '/:host_type/:login/repositories', to: 'repository_users#repositories', as: :user_repositories
     get '/:host_type/:login/contributions', to: 'repository_users#contributions', as: :user_contributions
     get '/:host_type/:login/projects', to: 'repository_users#projects', as: :user_projects
@@ -183,7 +168,6 @@ Rails.application.routes.draw do
     get '/:host_type/:owner/:name/sourcerank', to: 'repositories#sourcerank', as: :repository_sourcerank, format: false, constraints: { :name => /[^\/]+/ }
     get '/:host_type/:owner/:name/forks', to: 'repositories#forks', as: :repository_forks, format: false, constraints: { :name => /[^\/]+/ }
     get '/:host_type/:owner/:name/tags', to: 'repositories#tags', as: :repository_tags, format: false, constraints: { :name => /[^\/]+/ }
-    get '/:host_type/:owner/:name/dependency-issues', to: 'repositories#dependency_issues', format: false, constraints: { :name => /[^\/]+/ }
     get '/:host_type/:owner/:name/dependencies', to: 'repositories#dependencies', format: false, constraints: { :name => /[^\/]+/ }, as: :repository_dependencies
     get '/:host_type/:owner/:name/tree', to: 'repository_tree#show', as: :repository_tree, format: false, constraints: { :name => /[^\/]+/ }
 
@@ -198,15 +182,12 @@ Rails.application.routes.draw do
     get '/:host_type', to: 'repositories#index', as: :hosts
   end
 
-  #redirect after other issues routes created
-  get '/issues', to: redirect('explore/issues')
-
   get '/repos/search', to: 'repositories#search', as: :repo_search
   get '/repos', to: 'repositories#index', as: :repos
 
   get '/search', to: 'search#index'
 
-  get '/sitemap.xml.gz', to: redirect("https://#{ENV['FOG_DIRECTORY']}.s3.amazonaws.com/sitemaps/sitemap.xml.gz")
+  get '/sitemap.xml.gz', to: redirect("/sitemaps/sitemap.xml.gz")
 
   get '/enable_private', to: 'sessions#enable_private', as: :enable_private
   get '/enable_public', to: 'sessions#enable_public', as: :enable_public
@@ -245,9 +226,9 @@ Rails.application.routes.draw do
   get '/:platform/:name/:number/dependencies', to: 'projects#dependencies', constraints: { :number => /.*/, :name => /.*/ }, as: :version_dependencies
 
   post '/:platform/:name/sync', to: 'projects#sync', constraints: { :name => /.*/ }, as: :sync_project
+  post '/:platform/:name/refresh-stats', to: 'projects#refresh_stats', constraints: { :name => /.*/ }, as: :project_refresh_stats
   get '/:platform/:name/unsubscribe', to: 'projects#unsubscribe', constraints: { :name => /.*/ }, as: :unsubscribe_project
   get '/:platform/:name/usage', to: 'project_usage#show', as: :project_usage, constraints: { :name => /.*/ }, :defaults => { :format => 'html' }
-  get '/:platform/:name/timeline', to: 'timeline#show', as: :project_timeline, constraints: { :name => /.*/ }, :defaults => { :format => 'html' }
   post '/:platform/:name/mute', to: 'projects#mute', as: :mute_project, constraints: { :name => /.*/ }
   delete '/:platform/:name/unmute', to: 'projects#unmute', as: :unmute_project, constraints: { :name => /.*/ }
   get '/:platform/:name/tree', to: 'tree#show', constraints: { :name => PROJECT_CONSTRAINT }, as: :tree

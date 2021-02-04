@@ -1,7 +1,7 @@
 require 'rails_helper'
 
 describe PackageManager::NPM do
-  let(:project) { create(:project, name: 'foo', platform: described_class.name) }
+  let(:project) { create(:project, name: 'foo', platform: described_class.formatted_name) }
 
   it 'has formatted name of "npm"' do
     expect(described_class.formatted_name).to eq('npm')
@@ -30,6 +30,32 @@ describe PackageManager::NPM do
 
     it 'handles version' do
       expect(described_class.install_instructions(project, '2.0.0')).to eq("npm install foo@2.0.0")
+    end
+  end
+
+  describe '#deprecation_info' do
+    it "returns not-deprecated if last version isn't deprecated" do
+      expect(PackageManager::NPM).to receive(:project).with('foo').and_return({
+        "versions" => {
+            "0.0.1" => {},
+            "0.0.2" => {"deprecated" => "This package is deprecated"},
+            "0.0.3" => {}
+        }
+      })
+
+      expect(described_class.deprecation_info('foo')).to eq({is_deprecated: false, message: nil})
+    end
+
+    it "returns deprecated if last version is deprecated" do
+      expect(PackageManager::NPM).to receive(:project).with('foo').and_return({
+        "versions" => {
+            "0.0.1" => {},
+            "0.0.2" => {"deprecated" => "This package is deprecated"},
+            "0.0.3" => {"deprecated" => "This package is deprecated"}
+        }
+      })
+
+      expect(described_class.deprecation_info('foo')).to eq({is_deprecated: true, message: "This package is deprecated"})
     end
   end
 end

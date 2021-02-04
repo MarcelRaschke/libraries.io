@@ -21,8 +21,9 @@ class Repository < ApplicationRecord
   has_many :published_tags, -> { published }, anonymous_class: Tag
   has_many :manifests, dependent: :destroy
   has_many :repository_dependencies
+  has_many :repository_maintenance_stats, dependent: :destroy
   has_many :dependencies, through: :manifests, source: :repository_dependencies
-  has_many :dependency_projects, -> { group('projects.id').order("COUNT(projects.id) DESC") }, through: :dependencies, source: :project
+  has_many :dependency_projects, -> { group('projects.id').order(Arel.sql("COUNT(projects.id) DESC")) }, through: :dependencies, source: :project
   has_many :dependency_repos, -> { group('repositories.id') }, through: :dependency_projects, source: :repository
 
   has_many :repository_subscriptions, dependent: :delete_all
@@ -45,7 +46,6 @@ class Repository < ApplicationRecord
   scope :without_readme, -> { where("repositories.id NOT IN (SELECT repository_id FROM readmes)") }
   scope :with_projects, -> { joins(:projects) }
   scope :without_projects, -> { includes(:projects).where(projects: { repository_id: nil }) }
-  scope :without_subscriptons, -> { includes(:repository_subscriptions).where(repository_subscriptions: { repository_id: nil }) }
   scope :with_tags, -> { joins(:tags) }
   scope :without_tags, -> { includes(:tags).where(tags: { repository_id: nil }) }
 
@@ -67,11 +67,11 @@ class Repository < ApplicationRecord
   scope :pushed, -> { where.not(pushed_at: nil) }
   scope :good_quality, -> { maintained.open_source.pushed }
   scope :with_stars, -> { where('repositories.stargazers_count > 0') }
-  scope :interesting, -> { with_stars.order('repositories.stargazers_count DESC, repositories.rank DESC NULLS LAST, repositories.pushed_at DESC') }
+  scope :interesting, -> { with_stars.order(Arel.sql('repositories.stargazers_count DESC, repositories.rank DESC NULLS LAST, repositories.pushed_at DESC')) }
   scope :uninteresting, -> { without_readme.without_manifests.without_license.where('repositories.stargazers_count = 0').where('repositories.forks_count = 0') }
 
   scope :recently_created, -> { where('created_at > ?', 7.days.ago)}
-  scope :hacker_news, -> { order("((stargazers_count-1)/POW((EXTRACT(EPOCH FROM current_timestamp-created_at)/3600)+2,1.8)) DESC") }
+  scope :hacker_news, -> { order(Arel.sql("((stargazers_count-1)/POW((EXTRACT(EPOCH FROM current_timestamp-created_at)/3600)+2,1.8)) DESC")) }
   scope :trending, -> { good_quality.recently_created.with_stars }
 
   scope :maintained, -> { where('repositories."status" not in (?) OR repositories."status" IS NULL', ["Deprecated", "Removed", "Unmaintained", "Hidden"])}
@@ -88,7 +88,7 @@ class Repository < ApplicationRecord
            :create_webhook, :download_issues, :download_forks, :stargazers_url,
            :formatted_host, :get_file_list, :get_file_contents, :issues_url,
            :source_url, :contributors_url, :blob_url, :raw_url, :commits_url,
-           :compare_url, :download_pull_requests, to: :repository_host
+           :compare_url, :download_pull_requests, :retrieve_commits, :gather_maintenance_stats, to: :repository_host
 
   def self.language(language)
     where('lower(repositories.language) = ?', language.try(:downcase))
@@ -327,5 +327,13 @@ class Repository < ApplicationRecord
 
   def repository_host
     @repository_host ||= RepositoryHost.const_get(host_type.capitalize).new(self)
+  end
+
+  def hide
+    update!(status: "Hidden")
+  end
+
+  def gather_maintenance_stats_async
+    RepositoryMaintenanceStatWorker.enqueue(id, priority: :medium)
   end
 end

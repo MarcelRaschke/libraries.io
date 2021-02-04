@@ -9,17 +9,35 @@ class Project < ApplicationRecord
   include BitbucketProject
 
   HAS_DEPENDENCIES = false
-  STATUSES = ['Active', 'Deprecated', 'Unmaintained', 'Help Wanted', 'Removed']
-  API_FIELDS = [:name, :platform, :description, :language, :homepage,
-                :repository_url, :normalized_licenses, :rank, :status,
-                :latest_release_number, :latest_release_published_at,
-                :dependents_count, :dependent_repos_count, :latest_download_url]
+  STATUSES = ['Active', 'Deprecated', 'Unmaintained', 'Help Wanted', 'Removed', 'Hidden'].freeze
+  API_FIELDS = %i[
+    dependent_repos_count
+    dependents_count
+    deprecation_reason
+    description
+    homepage
+    language
+    latest_download_url
+    latest_release_number
+    latest_release_published_at
+    latest_stable_release_number
+    latest_stable_release_published_at
+    license_normalized
+    licenses
+    name
+    normalized_licenses
+    platform
+    rank
+    repository_url
+    status
+  ].freeze
 
-  validates_presence_of :name, :platform
-  validates_uniqueness_of :name, scope: :platform, case_sensitive: true
+  validates :name, :platform, presence: true
+  validates :name, uniqueness: { scope: :platform, case_sensitive: true }
+  validates :status, inclusion: { in: STATUSES, allow_blank: true }
 
   belongs_to :repository
-  has_many :versions
+  has_many :versions, dependent: :destroy
   has_many :dependencies, -> { group 'project_name' }, through: :versions
   has_many :contributions, through: :repository
   has_many :contributors, through: :contributions, source: :repository_user
@@ -30,11 +48,16 @@ class Project < ApplicationRecord
   has_many :dependent_projects, -> { group('projects.id').order('projects.rank DESC NULLS LAST') }, through: :dependent_versions, source: :project, class_name: 'Project'
   has_many :repository_dependencies
   has_many :dependent_repositories, -> { group('repositories.id').order('repositories.rank DESC NULLS LAST, repositories.stargazers_count DESC') }, through: :repository_dependencies, source: :repository
-  has_many :subscriptions
+  has_many :subscriptions, dependent: :destroy
   has_many :project_suggestions, dependent: :delete_all
   has_many :registry_permissions, dependent: :delete_all
   has_many :registry_users, through: :registry_permissions
   has_one :readme, through: :repository
+  has_many :repository_maintenance_stats, through: :repository
+
+  scope :updated_within, ->(start, stop) { where('updated_at >= ? and updated_at <= ? ', start, stop).order(updated_at: :asc) }
+  scope :least_recently_updated_stats, -> { joins(:repository_maintenance_stats).group('projects.id').where.not(repository: nil).order(Arel.sql('max(repository_maintenance_stats.updated_at) ASC')) }
+  scope :no_existing_stats, -> { includes(:repository_maintenance_stats).where(repository_maintenance_stats: {id: nil}).where.not(repository: nil) }
 
   scope :platform, ->(platform) { where(platform: PackageManager::Base.format_name(platform)) }
   scope :lower_platform, ->(platform) { where('lower(projects.platform) = ?', platform.try(:downcase)) }
@@ -65,9 +88,9 @@ class Project < ApplicationRecord
   scope :with_launchpad_url, -> { where('repository_url ILIKE ?', '%launchpad.net%') }
   scope :with_sourceforge_url, -> { where('repository_url ILIKE ?', '%sourceforge.net%') }
 
-  scope :most_watched, -> { joins(:subscriptions).group('projects.id').order("COUNT(subscriptions.id) DESC") }
-  scope :most_dependents, -> { with_dependents.order('dependents_count DESC') }
-  scope :most_dependent_repos, -> { with_dependent_repos.order('dependent_repos_count DESC') }
+  scope :most_watched, -> { joins(:subscriptions).group('projects.id').order(Arel.sql("COUNT(subscriptions.id) DESC")) }
+  scope :most_dependents, -> { with_dependents.order(Arel.sql('dependents_count DESC')) }
+  scope :most_dependent_repos, -> { with_dependent_repos.order(Arel.sql('dependent_repos_count DESC')) }
 
   scope :visible, -> { where('projects."status" != ? OR projects."status" IS NULL', "Hidden")}
   scope :maintained, -> { where('projects."status" not in (?) OR projects."status" IS NULL', ["Deprecated", "Removed", "Unmaintained", "Hidden"])}
@@ -94,7 +117,7 @@ class Project < ApplicationRecord
                           .where('repositories.contributions_count > 0')
                           .where('repositories.stargazers_count > 0')}
 
-  scope :hacker_news, -> { with_repo.where('repositories.stargazers_count > 0').order("((repositories.stargazers_count-1)/POW((EXTRACT(EPOCH FROM current_timestamp-repositories.created_at)/3600)+2,1.8)) DESC") }
+  scope :hacker_news, -> { with_repo.where('repositories.stargazers_count > 0').order(Arel.sql("((repositories.stargazers_count-1)/POW((EXTRACT(EPOCH FROM current_timestamp-repositories.created_at)/3600)+2,1.8)) DESC")) }
   scope :recently_created, -> { with_repo.where('repositories.created_at > ?', 2.weeks.ago)}
 
   after_commit :update_repository_async, on: :create
@@ -102,6 +125,8 @@ class Project < ApplicationRecord
   after_commit :update_source_rank_async, on: [:create, :update]
   before_save  :update_details
   before_destroy :destroy_versions
+  before_destroy :create_deleted_project
+  after_create :destroy_deleted_project
 
   def self.total
     Rails.cache.fetch 'projects:total', :expires_in => 1.day, race_condition_ttl: 2.minutes do
@@ -120,7 +145,6 @@ class Project < ApplicationRecord
   def manual_sync
     async_sync
     update_repository_async
-    self.last_synced_at = Time.zone.now
     forced_save
   end
 
@@ -129,25 +153,19 @@ class Project < ApplicationRecord
     save
   end
 
-  def sync
-    check_status
-    if status == 'Removed'
-      set_last_synced_at
-      return
-    end
-
-    result = platform_class.update(name)
-    set_last_synced_at unless result
-  rescue
-    set_last_synced_at
-  end
-
   def set_last_synced_at
     update_attribute(:last_synced_at, Time.zone.now)
   end
 
   def async_sync
-    PackageManagerDownloadWorker.perform_async(platform, name)
+    sync_classes.each{ |sync_class| PackageManagerDownloadWorker.perform_async(sync_class.name, name) }
+    CheckStatusWorker.perform_async(id, status == "Removed")
+  end
+
+  def sync_classes
+    return platform_class.providers(self) if platform_class::HAS_MULTIPLE_REPO_SOURCES
+
+    [platform_class]
   end
 
   def recently_synced?
@@ -169,6 +187,7 @@ class Project < ApplicationRecord
     normalize_licenses
     set_latest_release_published_at
     set_latest_release_number
+    set_latest_stable_release_info
     set_runtime_dependencies_count
     set_language
   end
@@ -179,6 +198,10 @@ class Project < ApplicationRecord
 
   def package_manager_url(version = nil)
     platform_class.package_link(self, version)
+  end
+
+  def repository_license
+    repository&.license
   end
 
   def download_url(version = nil)
@@ -233,6 +256,16 @@ class Project < ApplicationRecord
     versions.find_each(&:destroy)
   end
 
+  def create_deleted_project
+    DeletedProject.create_from_platform_and_name!(platform, name)
+  end
+
+  def destroy_deleted_project
+    # this happens when bringing a project back to life
+    digest = DeletedProject.digest_from_platform_and_name(platform, name)
+    DeletedProject.where(digest: digest).destroy_all
+  end
+
   def stars
     repository.try(:stargazers_count) || 0
   end
@@ -268,8 +301,9 @@ class Project < ApplicationRecord
 
   def set_dependents_count
     return if destroyed?
-    new_dependents_count = dependents.joins(:version).pluck('DISTINCT versions.project_id').count
-    new_dependent_repos_count = dependent_repositories.open_source.count.length
+    new_dependents_count = dependents.joins(:version).pluck(Arel.sql('DISTINCT versions.project_id')).count
+    new_dependent_repos_count = dependent_repos_fast_count
+
     updates = {}
     updates[:dependents_count] = new_dependents_count if read_attribute(:dependents_count) != new_dependents_count
     updates[:dependent_repos_count] = new_dependent_repos_count if read_attribute(:dependent_repos_count) != new_dependent_repos_count
@@ -339,18 +373,73 @@ class Project < ApplicationRecord
     Spdx.find(license).try(:id) || license
   end
 
+  def self.find_best(*args)
+    find_best!(*args)
+  rescue ActiveRecord::RecordNotFound
+    nil
+  end
+
+  def self.find_best!(platform, name, includes=[])
+    find_exact(platform, name, includes) ||
+      find_lower(platform, name, includes) ||
+      find_with_package_manager!(platform, name, includes)
+  end
+
+  private_class_method def self.find_exact(platform, name, includes=[])
+    visible
+      .platform(platform)
+      .where(name: name)
+      .includes(includes.present? ? includes : nil)
+      .first
+  end
+
+  private_class_method def self.find_lower(platform, name, includes=[])
+    visible
+      .lower_platform(platform)
+      .lower_name(name)
+      .includes(includes.present? ? includes : nil)
+      .first
+  end
+
+  private_class_method def self.find_with_package_manager!(platform, name, includes=[])
+    platform_class = PackageManager::Base.find(platform)
+    raise ActiveRecord::RecordNotFound if platform_class.nil?
+    names = platform_class
+      .project_find_names(name)
+      .map(&:downcase)
+
+    visible
+      .lower_platform(platform)
+      .where("lower(projects.name) in (?)", names)
+      .includes(includes.present? ? includes : nil)
+      .first!
+  end
+
   def normalize_licenses
-    if licenses.blank?
-      normalized = []
-    elsif licenses.length > 150
-      normalized = ['Other']
-    else
-      normalized = licenses.split(/[,\/]/).map do |license|
-        Spdx.find(license).try(:id)
-      end.compact
-      normalized = ['Other'] if normalized.empty?
-    end
-    self.normalized_licenses = normalized
+    # avoid changing the license if it has been set directly through the admin console
+    return if license_set_by_admin?
+
+    self.normalized_licenses =
+      if licenses.blank?
+        []
+
+      elsif licenses.length > 150
+        self.license_normalized = true
+        ["Other"]
+
+      else
+        spdx = spdx_license
+
+        if spdx.empty?
+          self.license_normalized = true
+          ["Other"]
+
+        else
+          self.license_normalized = spdx.first != licenses
+          spdx
+
+        end
+      end
   end
 
   def update_repository_async
@@ -370,6 +459,11 @@ class Project < ApplicationRecord
   def can_have_dependencies?
     return false if platform_class == Project
     platform_class::HAS_DEPENDENCIES
+  end
+
+  def can_have_entire_package_deprecated?
+    return false if platform_class == Project
+    platform_class::ENTIRE_PACKAGE_CAN_BE_DEPRECATED
   end
 
   def can_have_versions?
@@ -395,25 +489,56 @@ class Project < ApplicationRecord
     subscriptions.with_repository_subscription.where('repository_subscriptions.user_id = ?', user.id).map(&:repository).uniq
   end
 
+  def dependent_repos_view_query(limit, offset=0)
+    sql = "SELECT *
+           FROM   repositories
+           WHERE  id IN
+                  (
+                        SELECT   repository_id
+                        FROM     project_dependent_repositories
+                        WHERE    project_id = ?
+                        ORDER BY rank DESC nulls last,
+                                 stargazers_count DESC limit ? offset ?);"
+
+    Repository.find_by_sql([sql, id, limit, offset])
+  end
+
+  def dependent_repos_top_ten
+    dependent_repos_view_query(10)
+  end
+
+  def dependent_repos_fast_count
+    ProjectDependentRepository.where(project_id: id).count
+  end
+
   def check_status(removed = false)
     url = platform_class.check_status_url(self)
     return if url.blank?
     response = Typhoeus.head(url)
     if platform.downcase == 'packagist' && response.response_code == 302
       update_attribute(:status, 'Removed')
-    elsif platform.downcase != 'packagist' && [400, 404].include?(response.response_code)
+    elsif platform.downcase == 'pypi' && response.response_code == 404
+      # TODO: remove this stanza once this bug is fixed: https://github.com/pypa/warehouse/issues/3709#issuecomment-754973958
+      update_attribute(:status, 'Deprecated')
+    elsif platform.downcase != 'packagist' && [400, 404, 410].include?(response.response_code)
       update_attribute(:status, 'Removed')
+    elsif can_have_entire_package_deprecated?
+      result = platform_class.deprecation_info(name)
+      if result[:is_deprecated]
+        update_attribute(:status, 'Deprecated')
+        update_attribute(:deprecation_reason, result[:message])
+      end
     elsif removed
       update_attribute(:status, nil)
     end
   end
 
   def unique_repo_requirement_ranges
-    repository_dependencies.group('repository_dependencies.requirements').count.keys
+    repository_dependencies.select('repository_dependencies.requirements').distinct.pluck(:requirements)
   end
 
   def unique_project_requirement_ranges
-    dependents.group('dependencies.requirements').count.keys
+    dependents.select('dependencies.requirements').distinct.pluck(:requirements)
   end
 
   def unique_requirement_ranges
@@ -467,22 +592,6 @@ class Project < ApplicationRecord
     end
   end
 
-  def self.find_with_includes!(platform, name, includes)
-    # this clunkiness is because .includes() doesn't allow zero args and we want
-    # to allow that.
-    query = self.visible.platform(platform).where(name: name)
-    query = query.includes(*includes) unless includes.empty?
-    project = query.first
-    if project.nil?
-      query = self.visible.lower_platform(platform).lower_name(name)
-      query = query.includes(*includes) unless includes.empty?
-      project = query.first
-    end
-    raise ActiveRecord::RecordNotFound if project.nil?
-    raise ActiveRecord::RecordNotFound if project.status == 'Hidden'
-    project
-  end
-
   def find_version!(version_name)
     version = if version_name == 'latest'
                 versions.sort.first
@@ -495,4 +604,27 @@ class Project < ApplicationRecord
     version
   end
 
+  def update_maintenance_stats_async(priority: :medium)
+    RepositoryMaintenanceStatWorker.enqueue(repository.id, priority: priority) unless repository.nil?
+  end
+
+  def reformat_repository_url
+    repository_url = URLParser.try_all(self.repository_url)
+    update_attributes(repository_url: repository_url)
+  end
+
+  private
+
+  def spdx_license
+    licenses
+      .downcase
+      .sub(/^\(/, "")
+      .sub(/\)$/, "")
+      .split("or")
+      .flat_map { |l| l.split("and") }
+      .flat_map { |l| l.split(/[,\/]/) }
+      .map(&Spdx.method(:find))
+      .compact
+      .map(&:id)
+  end
 end

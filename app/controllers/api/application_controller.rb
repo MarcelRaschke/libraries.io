@@ -2,14 +2,6 @@ class Api::ApplicationController < ApplicationController
   skip_before_action :verify_authenticity_token
   before_action :check_api_key
 
-  rescue_from ActiveRecord::RecordNotFound do |e|
-    render json: { message: e.message }, status: :not_found
-  end
-
-  rescue_from ActiveRecord::RecordInvalid do |e|
-    render json: { message: e.message }, status: :unprocessable_entity
-  end
-
   private
 
   def disabled_in_read_only
@@ -19,7 +11,7 @@ class Api::ApplicationController < ApplicationController
   end
 
   def max_page
-    1000
+    300
   end
 
   def check_api_key
@@ -41,6 +33,10 @@ class Api::ApplicationController < ApplicationController
     @current_api_key ||= ApiKey.active.find_by_access_token(params[:api_key])
   end
 
+  def internal_api_key?
+    !!current_api_key&.is_internal?
+  end
+
   def record_api_usage
     return unless @current_api_key.present?
     REDIS.hincrby "api-usage-#{Date.today.strftime("%Y-%m")}", @current_api_key.id, 1
@@ -54,5 +50,9 @@ class Api::ApplicationController < ApplicationController
     klass.search(query, filters: filters,
                         sort: format_sort,
                         order: format_order, api: true).paginate(page: page_number, per_page: per_page_number)
+  end
+
+  def require_internal_api_key
+    render json: { error: "Error 403, you don't have permissions for this operation." }, status: :forbidden unless current_api_key.present? && current_api_key.is_internal?
   end
 end

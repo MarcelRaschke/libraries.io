@@ -4,9 +4,21 @@ class ApplicationController < ActionController::Base
   # For APIs, you may want to use :null_session instead.
   protect_from_forgery with: :exception
 
-  helper_method :current_user, :logged_in?, :logged_out?, :current_host, :formatted_host
+  helper_method :current_user, :logged_in?, :logged_out?, :current_host, :formatted_host, :tidelift_flash_partial
+
+  before_action :log_active_connections
 
   private
+
+  def log_active_connections
+    # Only log 1 in 10 requests
+    return unless rand(10) == 5
+    Rails.logger.info("Active ActiveRecord connection count: #{ActiveRecord::Base.connection_pool.connections.size}")
+  end
+
+  def tidelift_flash_partial
+    Dir[Rails.root.join('app', 'views', 'shared', 'flashes', '*')].sample
+  end
 
   def current_host
     params[:host_type].try(:downcase)
@@ -69,13 +81,21 @@ class ApplicationController < ActionController::Base
   end
 
   def find_project
-    @project = Project.find_with_includes!(params[:platform], params[:name], [:repository, :versions])
+    @project = Project.find_best!(params[:platform], params[:name], [:repository, :versions])
     @color = @project.color
-  end
 
-  def find_project_lite
-    @project = Project.visible.platform(params[:platform]).where(name: params[:name]).first
-    raise ActiveRecord::RecordNotFound if @project.nil?
+    if @project.name != params[:name]
+      redirect_to(
+        # Unescape since url_for automatically escapes our already-escaped project name
+        URI.unescape(
+          url_for(
+            params
+              .to_unsafe_h
+              .merge({ "name" => CGI.escape(@project.name) })
+          )
+        )
+      )
+    end
   end
 
   def current_platforms
@@ -121,26 +141,6 @@ class ApplicationController < ActionController::Base
   def custom_order
     return unless format_sort.present?
     "#{format_sort} #{format_order}"
-  end
-
-  def search_issues(options = {})
-    @search = paginate Issue.search(filters: {
-      license: current_license,
-      language: current_language,
-      labels: options[:labels]
-    }, repo_ids: options[:repo_ids]), page: page_number, per_page: per_page_number
-    @issues = @search.records.includes(:repository)
-    @facets = @search.response.aggregations
-  end
-
-  def first_pull_request_issues(labels)
-    @search = paginate Issue.first_pr_search(filters: {
-      license: current_license,
-      language: current_language,
-      labels: labels
-    }), page: page_number, per_page: per_page_number
-    @issues = @search.records.includes(:repository)
-    @facets = @search.response.aggregations
   end
 
   def search_repos(query)

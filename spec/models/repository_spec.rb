@@ -17,8 +17,8 @@ describe Repository, type: :model do
   it { should belong_to(:repository_user) }
   it { should belong_to(:source) }
 
-  it { should validate_uniqueness_of(:full_name) }
-  it { should validate_uniqueness_of(:uuid) }
+  it { should validate_uniqueness_of(:full_name).scoped_to(:host_type) }
+  it { should validate_uniqueness_of(:uuid).scoped_to(:host_type) }
 
   describe '#domain' do
     it 'should be https://github.com for GitHub repos' do
@@ -192,6 +192,187 @@ describe Repository, type: :model do
 
       it 'should return an avatar url for Bitbucket repos' do
         expect(build(:repository, host_type: 'Bitbucket').avatar_url).to eq('https://bitbucket.org/rails/rails/avatar/60')
+      end
+    end
+  end
+
+  describe '#gather_maintenance_stats' do
+    let(:repository) { create(:repository, full_name: 'chalk/chalk') }
+    let!(:auth_token) { create(:auth_token) }
+    let!(:project) do
+      repository.projects.create!(
+        name: 'test-project',
+        platform: 'Maven',
+        repository_url: 'https://github.com/librariesio/libraries.io',
+        homepage: 'https://libraries.io'
+      )
+    end
+
+    before do
+      # set the value for DateTime.current so that the queries always have the same variables and can be matched in VCR
+      allow(DateTime).to receive(:current).and_return(DateTime.parse("2018-12-14T17:49:49+00:00"))
+    end
+
+    # To re-record these VCR cassettes needed for maintenance stats
+    # I would recommend starting over unless it is a minor change or you are adding an additional call.
+    # If you are starting over, set the VCR record mode to :new_episodes.
+    # Set the AuthToken factory to use a legitimate token so the calls are successfully made during recording.
+    # Verify tests pass with recorded VCR cassettes after they have been created. Easily done by setting VCR record mode back to :none and running specs again.
+    # Use Find/Replace to remove your token from any recorded calls and replace with some obvious test token like TEST_TOKEN. VCR should not be looking for a token to match with.
+    # Verify one last time with replaced token before committing updated VCR cassettes.
+
+    # GitHub API V3 calls can be matched with default :method and :uri.
+    # GitHub API V4 calls all use the same endpoint, but have unique request bodies with the GraphQL queries. They will need to match on :body.
+    context "with a valid repository" do
+      before do
+        VCR.use_cassette('github/chalk_api', :match_requests_on => [:method, :uri, :body, :query]) do
+          repository.gather_maintenance_stats
+        end
+      end
+
+      it "should save metrics for repository" do
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be > 0
+
+        maintenance_stats.each do |stat|
+          # every stat should have a value
+          expect(stat.value).to_not be nil
+        end
+      end
+
+      it "should update existing stats" do
+        first_updated_at = repository.repository_maintenance_stats.first.updated_at
+        category = repository.repository_maintenance_stats.first.category
+
+        VCR.use_cassette('github/chalk_api', :match_requests_on => [:method, :uri, :body, :query]) do
+          repository.gather_maintenance_stats
+        end
+
+        updated_stat = repository.repository_maintenance_stats.find_by(category: category)
+        expect(updated_stat).to_not be nil
+        expect(updated_stat.updated_at).to be > first_updated_at
+      end
+    end
+
+    context "with invalid repository" do
+      let(:repository) { create(:repository, full_name: 'bad/example-for-testing') }
+
+      it "should save metrics for repository" do
+        VCR.use_cassette('github/bad_repository', :match_requests_on => [:method, :uri, :body, :query]) do
+          repository.gather_maintenance_stats
+        end
+
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be 0
+      end
+    end
+
+    context "with empty repository" do
+      let(:repository) { create(:repository, full_name: 'buddhamagnet/heidigoodchild') }
+
+      it "should save default values" do
+        VCR.use_cassette('github/empty_repository', :match_requests_on => [:method, :uri, :body, :query]) do
+          repository.gather_maintenance_stats
+        end
+
+        maintenance_stats = repository.repository_maintenance_stats
+        non_zeros = {
+          issue_closure_rate: "1.0",
+          pull_request_acceptance: "1.0",
+          one_year_issue_closure_rate: "1.0",
+          one_year_pull_request_closure_rate: "1.0",
+          issues_stats_truncated: "false",
+        }
+        expect(maintenance_stats.count).to be > 0
+        maintenance_stats.each do |stat|
+          should_be = non_zeros.fetch(stat.category.to_sym, "0")
+          expect(stat.value).to eql should_be
+        end
+      end
+    end
+
+    context "with non GitHub repository" do
+      let(:repository) { create(:repository, host_type: "Bitbucket") }
+
+      it "should not save any values" do
+        VCR.use_cassette('github/chalk_api', :match_requests_on => [:method, :uri, :body, :query]) do
+          repository.gather_maintenance_stats
+        end
+
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be 0
+      end
+    end
+
+    context "with a GitHub repository but for some reason not a GitHub Project" do
+      let!(:project) do
+        repository.projects.create!(
+          name: 'test-project',
+          platform: 'Maven',
+          repository_url: 'https://def.not.github.com',
+          homepage: 'https://def.not.github.com'
+        )
+      end
+
+      it "should not save any values" do
+        repository.gather_maintenance_stats
+
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be 0
+      end
+
+      it "should delete existing stats" do
+        repository.repository_maintenance_stats.create!(
+          category: 'test',
+          value: 'yep'
+        )
+        
+        repository.gather_maintenance_stats
+
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be 0
+      end
+    end
+
+    context "with bitbucket repository" do
+      let(:repository) { create(:repository, full_name:'ecollins/passlib', host_type: 'Bitbucket') }
+      let!(:auth_token) { create(:auth_token) }
+      let!(:project) do
+        repository.projects.create!(
+          name: 'test-project',
+          platform: 'Pypi',
+          repository_url: 'https://bitbucket.org/ecollins/passlib',
+          homepage: 'https://libraries.io'
+        )
+      end
+
+      before do
+        VCR.use_cassette('bitbucket/passlib') do
+          repository.gather_maintenance_stats
+        end
+      end
+
+      it "should save metrics for repository" do
+        maintenance_stats = repository.repository_maintenance_stats
+        expect(maintenance_stats.count).to be > 0
+
+        maintenance_stats.each do |stat|
+          # every stat should have a value
+          expect(stat.value).to_not be nil
+        end
+      end
+
+      it "should update existing stats" do
+        first_updated_at = repository.repository_maintenance_stats.first.updated_at
+        category = repository.repository_maintenance_stats.first.category
+
+        VCR.use_cassette('bitbucket/passlib') do
+          repository.gather_maintenance_stats
+        end
+
+        updated_stat = repository.repository_maintenance_stats.find_by(category: category)
+        expect(updated_stat).to_not be nil
+        expect(updated_stat.updated_at).to be > first_updated_at
       end
     end
   end

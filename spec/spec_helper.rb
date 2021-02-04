@@ -1,3 +1,4 @@
+require 'pry'
 require 'simplecov'
 SimpleCov.start 'rails'
 
@@ -10,6 +11,10 @@ RSpec.configure do |config|
     mocks.verify_partial_doubles = true
   end
 
+  config.before :all do
+    Scenic.database.refresh_materialized_view('project_dependent_repositories', concurrently: false, cascade: false)
+  end
+
   config.around :each, elasticsearch: true do |example|
     [Project, Repository, Issue].each do |model|
       model.__elasticsearch__.create_index!(force: true)
@@ -20,4 +25,7 @@ RSpec.configure do |config|
       model.__elasticsearch__.client.indices.delete index: model.index_name
     end
   end
+
+  config.filter_run :focus
+  config.run_all_when_everything_filtered = true
 end

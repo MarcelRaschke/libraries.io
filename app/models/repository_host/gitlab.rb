@@ -1,6 +1,10 @@
 module RepositoryHost
   class Gitlab < Base
-    IGNORABLE_EXCEPTIONS = [::Gitlab::Error::NotFound, ::Gitlab::Error::Forbidden, ::Gitlab::Error::InternalServerError, ::Gitlab::Error::Parsing]
+    IGNORABLE_EXCEPTIONS = [::Gitlab::Error::NotFound,
+                            ::Gitlab::Error::Forbidden,
+                            ::Gitlab::Error::Unauthorized,
+                            ::Gitlab::Error::InternalServerError,
+                            ::Gitlab::Error::Parsing]
 
     def self.api_missing_error_class
       ::Gitlab::Error::NotFound
@@ -55,6 +59,10 @@ module RepositoryHost
       # not implemented yet
     end
 
+    def retrieve_commits
+      # not implemented yet
+    end
+
     def download_owner
       return if repository.owner && repository.repository_user_id && repository.owner.login == repository.owner_name
       namespace = api_client.project(repository.full_name).try(:namespace)
@@ -80,7 +88,7 @@ module RepositoryHost
       nil
     end
 
-    def create_webook(token = nil)
+    def create_webhook(token = nil)
       # not implemented yet
     end
 
@@ -178,18 +186,18 @@ module RepositoryHost
         host_type: 'GitLab',
         full_name: project.path_with_namespace,
         owner: {},
-        fork: project.forked_from_project.present?,
+        fork: project.try(:forked_from_project).present?,
         updated_at: project.last_activity_at,
         stargazers_count: project.star_count,
         has_issues: project.issues_enabled,
         has_wiki: project.wiki_enabled,
         scm: 'git',
-        private: !project.public,
+        private: project.visibility != "public",
         pull_requests_enabled: project.merge_requests_enabled,
         logo_url: project.avatar_url,
         keywords: project.tag_list,
         parent: {
-          full_name: project.forked_from_project.try(:path_with_namespace)
+          full_name: project.try(:forked_from_project).try(:path_with_namespace)
         }
       })
     rescue *IGNORABLE_EXCEPTIONS

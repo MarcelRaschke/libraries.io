@@ -1,36 +1,46 @@
+# frozen_string_literal: true
+
 module PackageManager
   class Base
-    COLOR = '#fff'
+    COLOR = "#fff"
     BIBLIOTHECARY_SUPPORT = false
     BIBLIOTHECARY_PLANNED = false
+    HAS_MULTIPLE_REPO_SOURCES = false
     SECURITY_PLANNED = false
     HIDDEN = false
     HAS_OWNERS = false
+    ENTIRE_PACKAGE_CAN_BE_DEPRECATED = false
+    SUPPORTS_SINGLE_VERSION_UPDATE = false
 
     def self.platforms
       @platforms ||= begin
-        Dir[Rails.root.join('app', 'models', 'package_manager', '*.rb')].each do |file|
+        Dir[Rails.root.join("app", "models", "package_manager", "*.rb")].sort.each do |file|
           require file unless file.match(/base\.rb$/)
         end
         PackageManager.constants
           .reject { |platform| platform == :Base }
-          .map{|sym| "PackageManager::#{sym}".constantize }
+          .map { |sym| "PackageManager::#{sym}".constantize }
           .reject { |platform| platform::HIDDEN }
           .sort_by(&:name)
       end
     end
 
     def self.default_language
-      Linguist::Language.all.find{|l| l.color == color }.try(:name)
+      Linguist::Language.all.find { |l| l.color == color }.try(:name)
     end
 
     def self.format_name(platform)
       return nil if platform.nil?
+
       find(platform).to_s.demodulize
     end
 
     def self.find(platform)
-      platforms.find{|p| p.formatted_name.downcase == platform.downcase }
+      platforms.find { |p| p.formatted_name.downcase == platform.downcase }
+    end
+
+    def self.db_platform
+      name.demodulize
     end
 
     def self.color
@@ -42,7 +52,7 @@ module PackageManager
     end
 
     def self.formatted_name
-      self.to_s.demodulize
+      to_s.demodulize
     end
 
     def self.package_link(_project, _version = nil)
@@ -77,30 +87,77 @@ module PackageManager
       find(platform).try(:formatted_name) || platform
     end
 
-    def self.save(project)
-      return unless project.present?
+    def self.map_project(project)
       mapped_project = mapping(project)
       mapped_project = mapped_project.delete_if { |_key, value| value.blank? } if mapped_project.present?
+      mapped_project
+    end
+
+    def self.save(project, sync_versions: true)
+      return unless project.present?
+
+      mapped_project = map_project(project)
       return false unless mapped_project.present?
-      dbproject = Project.find_or_initialize_by({:name => mapped_project[:name], :platform => self.name.demodulize})
+
+      dbproject = Project.find_or_initialize_by({ name: mapped_project[:name], platform: db_platform })
       if dbproject.new_record?
-        dbproject.assign_attributes(mapped_project.except(:name, :releases, :versions, :version, :dependencies))
+        dbproject.assign_attributes(mapped_project.except(:name, :releases, :versions, :version, :dependencies, :properties))
         dbproject.save
       else
-        dbproject.update_attributes(mapped_project.except(:name, :releases, :versions, :version, :dependencies))
+        dbproject.reformat_repository_url
+        attrs = mapped_project.except(:name, :releases, :versions, :version, :dependencies, :properties)
+        dbproject.update_attributes(attrs)
       end
 
-      if self::HAS_VERSIONS
-        versions(project).each do |version|
-          unless dbproject.versions.find {|v| v.number == version[:number] }
-            dbproject.versions.create(version)
-          end
-        end
+      if self::HAS_VERSIONS && sync_versions
+        versions(project, dbproject.name)
+          .each { |v| add_version(dbproject, v) }
+          .tap { |vs| deprecate_versions(dbproject, vs) }
       end
 
-      if self::HAS_DEPENDENCIES
-        save_dependencies(mapped_project)
+      save_dependencies(mapped_project) if self::HAS_DEPENDENCIES
+      finalize_dbproject(dbproject)
+    end
+
+    def self.update_version(name, version)
+      unless self::SUPPORTS_SINGLE_VERSION_UPDATE
+        logger.warn("#{db_platform}.update_version(#{name}, #{version}) called but not supported on platform")
+        return
       end
+
+      update(name, sync_versions: false)
+      mapped_project=map_project(project(name))
+      unless mapped_project.present?
+        logger.warn("No mapped project for #{db_platform}/#{name}")
+        return
+      end
+
+      dbproject = Project.find_by!(name: mapped_project[:name], platform: db_platform)
+      add_version(dbproject, one_version(dbproject.name, version))
+      # TODO handle deprecation here too
+      save_dependencies(mapped_project) if self::HAS_DEPENDENCIES
+      finalize_dbproject(dbproject)
+    end
+
+    def self.add_version(dbproject, version_hash)
+      existing = dbproject.versions.find_or_initialize_by(number: version_hash[:number]) do |new_version|
+        new_version.update_attributes(version_hash)
+      end
+      existing.repository_sources = Set.new(existing.repository_sources).add(self::REPOSITORY_SOURCE_NAME).to_a if self::HAS_MULTIPLE_REPO_SOURCES
+      existing.save
+    end
+
+    def self.deprecate_versions(dbproject, version_hash)
+      case dbproject.platform.downcase
+      when "rubygems" # yanked gems will be omitted from project JSON versions
+        dbproject
+          .versions
+          .where.not(number: version_hash.pluck(:number))
+          .update_all(status: "Removed")
+      end
+    end
+
+    def self.finalize_dbproject(dbproject)
       dbproject.reload
       dbproject.download_registry_users
       dbproject.last_synced_at = Time.now
@@ -108,18 +165,16 @@ module PackageManager
       dbproject
     end
 
-    def self.update(name)
-      begin
-        project = project(name)
-        save(project) if project.present?
-      rescue SystemExit, Interrupt
-        exit 0
-      rescue Exception => exception
-        if ENV["RACK_ENV"] == "production"
-          Bugsnag.notify(exception)
-        else
-          raise
-        end
+    def self.update(name, sync_versions: true)
+      proj = project(name)
+      save(proj, sync_versions: sync_versions) if proj.present?
+    rescue SystemExit, Interrupt
+      exit 0
+    rescue StandardError => e
+      if ENV["RACK_ENV"] == "production"
+        Bugsnag.notify(e)
+      else
+        raise
       end
     end
 
@@ -136,39 +191,50 @@ module PackageManager
     end
 
     def self.import
-      return if ENV['READ_ONLY'].present?
+      return if ENV["READ_ONLY"].present?
+
       project_names.each { |name| update(name) }
     end
 
     def self.import_recent
-      return if ENV['READ_ONLY'].present?
+      return if ENV["READ_ONLY"].present?
+
       recent_names.each { |name| update(name) }
     end
 
     def self.import_new
-      return if ENV['READ_ONLY'].present?
+      return if ENV["READ_ONLY"].present?
+
       new_names.each { |name| update(name) }
     end
 
     def self.new_names
       names = project_names
       existing_names = []
-      Project.platform(self.name.demodulize).select(:id, :name).find_each {|project| existing_names << project.name }
+      Project.platform(db_platform).select(:id, :name).find_each { |project| existing_names << project.name }
       names - existing_names
     end
 
     def self.save_dependencies(mapped_project)
       name = mapped_project[:name]
-      proj = Project.find_by(name: name, platform: self.name.demodulize)
+      proj = Project.find_by(name: name, platform: db_platform)
       proj.versions.includes(:dependencies).each do |version|
-        deps = dependencies(name, version.number, mapped_project) rescue []
-        next unless deps && deps.any? && version.dependencies.empty?
+        next if version.dependencies.any?
+
+        deps = begin
+                 dependencies(name, version.number, mapped_project)
+               rescue StandardError
+                 []
+               end
+        next unless deps&.any? && version.dependencies.empty?
+
         deps.each do |dep|
-          unless dep[:project_name].blank? || version.dependencies.find_by_project_name(dep[:project_name])
-            named_project_id = Project.platform(self.name.demodulize).where(name: dep[:project_name].strip).first.try(:id)
-            named_project_id = Project.lower_platform(self.name.demodulize).lower_name(dep[:project_name].strip).first.try(:id) if named_project_id.nil?
-            version.dependencies.create(dep.merge(project_id: named_project_id.try(:strip)))
-          end
+          next if dep[:project_name].blank? || version.dependencies.find_by_project_name(dep[:project_name])
+
+          named_project_id = Project
+            .find_best(db_platform, dep[:project_name].strip)
+            &.id
+          version.dependencies.create(dep.merge(project_id: named_project_id.try(:strip)))
         end
         version.set_runtime_dependencies_count
       end
@@ -178,81 +244,93 @@ module PackageManager
       []
     end
 
-    def self.map_dependencies(deps, kind, optional = false, platform = self.name.demodulize)
-      deps.map do |k,v|
+    def self.map_dependencies(deps, kind, optional = false, platform = db_platform)
+      deps.map do |k, v|
         {
           project_name: k,
           requirements: v,
           kind: kind,
           optional: optional,
-          platform: platform
+          platform: platform,
         }
       end
     end
 
     def self.find_and_map_dependencies(name, version, _project)
       dependencies = find_dependencies(name, version)
-      return [] unless dependencies && dependencies.any?
+      return [] unless dependencies&.any?
+
       dependencies.map do |dependency|
         dependency = dependency.deep_stringify_keys
         {
           project_name: dependency["name"],
-          requirements: dependency["requirement"] || '*',
+          requirements: dependency["requirement"] || "*",
           kind: dependency["type"],
-          platform: self.name.demodulize
+          platform: db_platform,
         }
       end
     end
 
     def self.repo_fallback(repo, homepage)
-      repo = '' if repo.nil?
-      homepage = '' if homepage.nil?
+      repo = "" if repo.nil?
+      homepage = "" if homepage.nil?
       repo_url = URLParser.try_all(repo)
       homepage_url = URLParser.try_all(homepage)
       if repo_url.present?
-        return repo_url
+        repo_url
       elsif homepage_url.present?
-        return homepage_url
+        homepage_url
       else
         repo
       end
     end
 
-    private
+    def self.project_find_names(project_name)
+      [project_name]
+    end
 
-    def self.get(url, options = {})
+    def self.deprecation_info(_name)
+      { is_deprecated: false, message: nil }
+    end
+
+    private_class_method def self.get(url, options = {})
       Oj.load(get_raw(url, options))
     end
 
-    def self.get_raw(url, options = {})
-      request(url, options).body
+    private_class_method def self.get_raw(url, options = {})
+      rsp = request(url, options)
+      return "" unless rsp.status == 200
+      return rsp.body
     end
 
-    def self.request(url, options = {})
+    private_class_method def self.request(url, options = {})
       connection = Faraday.new url.strip, options do |builder|
-        builder.use :http_cache, store: Rails.cache, logger: Rails.logger, shared_cache: false, serializer: Marshal
         builder.use FaradayMiddleware::Gzip
         builder.use FaradayMiddleware::FollowRedirects, limit: 3
+        builder.request :retry, { max: 2, interval: 0.05, interval_randomness: 0.5, backoff_factor: 2 }
+
         builder.use :instrumentation
         builder.adapter :typhoeus
       end
       connection.get
     end
 
-    def self.get_html(url, options = {})
+    private_class_method def self.get_html(url, options = {})
       Nokogiri::HTML(get_raw(url, options))
     end
 
-    def self.get_xml(url, options = {})
+    private_class_method def self.get_xml(url, options = {})
       Ox.parse(get_raw(url, options))
     end
 
-    def self.get_json(url)
-      get(url, headers: { 'Accept' => "application/json"})
+    private_class_method def self.get_json(url)
+      get(url, headers: { "Accept" => "application/json" })
     end
 
-    def self.download_async(names)
-      names.each { |name| PackageManagerDownloadWorker.perform_async(self.name.demodulize, name) }
+    private_class_method def self.download_async(names)
+      names.each_slice(1000).each_with_index do |group, index|
+        group.each { |name| PackageManagerDownloadWorker.perform_in(index.hours, self.name, name) }
+      end
     end
   end
 end

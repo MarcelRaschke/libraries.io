@@ -6,21 +6,28 @@ New to Ruby? No worries! You can follow these instructions to install a local se
 
 ### Installing a Local Server
 
-First things first, you'll need to install Ruby 2.5.1. I recommend using the excellent [rbenv](https://github.com/rbenv/rbenv),
+First things first, you'll need to install Ruby 2.6.2. I recommend using the excellent [rbenv](https://github.com/rbenv/rbenv),
 and [ruby-build](https://github.com/rbenv/ruby-build)
 
 ```bash
 brew install rbenv ruby-build
-rbenv install 2.5.1
+rbenv install 2.6.2
 ```
 
 Next, you'll need to make sure that you have PostgreSQL, Elasticsearch 2.4, and Redis installed. This can be done easily on OSX using [Homebrew](http://mxcl.github.io/homebrew/) or postgres can be installed by using [http://postgresapp.com](http://postgresapp.com). Please also see these [further instructions for installing Postgres via Homebrew](http://www.mikeball.us/blog/setting-up-postgres-with-homebrew/).
 
 ```bash
-brew install postgres phantomjs elasticsearch@2.4 redis icu4c cmake
+brew cask install phantomjs homebrew/cask-versions/adoptopenjdk8
+brew install postgres elasticsearch@2.4 redis icu4c cmake
 ```
 
 Remember to start the services!
+
+```bash
+brew services start elasticsearch@2.4
+brew services start redis
+brew services start postgresql
+```
 
 On Debian-based Linux distributions you can use apt-get to install Postgres:
 
@@ -51,6 +58,7 @@ Go create a [Personal access token on GitHub](https://help.github.com/articles/c
  irb> PackageManager::NPM.update "pictogram"
  irb> PackageManager::Rubygems.update "split"
  irb> PackageManager::Bower.update "sbteclipse"
+ irb> Repository.create_from_host("github", "librariesio/bibliothecary")
 ```
 
 You can then index that data into elasticsearch with the following rake task:

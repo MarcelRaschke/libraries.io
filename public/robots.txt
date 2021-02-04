@@ -1,4 +1,10 @@
 Host: libraries.io
 User-agent: *
-Disallow: /admin
-Sitemap: https://libraries.io/sitemap.xml.gz
+Disallow: /admin/
+Disallow: /github/
+Disallow: /gitlab/
+Disallow: /bitbucket/
+Disallow: */usage$
+Disallow: */dependents$
+Disallow: /auth/
+Sitemap: https://libraries.io/sitemaps/sitemap.xml.gz

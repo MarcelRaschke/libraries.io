@@ -30,7 +30,7 @@ namespace :projects do
     end
   end
 
-  desc 'Update project repositoires'
+  desc 'Update project repositories'
   task update_repos: :environment do
     exit if ENV['READ_ONLY'].present?
     projects = Project.maintained.where('projects.updated_at < ?', 1.week.ago).with_repo
@@ -40,7 +40,7 @@ namespace :projects do
     end
   end
 
-  desc 'Check project repositoires statuses'
+  desc 'Check project repositories statuses'
   task chech_repo_status: :environment do
     exit if ENV['READ_ONLY'].present?
     ['bower', 'go', 'elm', 'alcatraz', 'julia', 'nimble'].each do |platform|
@@ -109,8 +109,111 @@ namespace :projects do
       if project
         project.async_sync if project.potentially_outdated? rescue nil
       else
-        PackageManagerDownloadWorker.perform_async(platform, name)
+        PackageManagerDownloadWorker.perform_async("PackageManager::#{platform}", name)
       end
+    end
+  end
+
+  desc 'Refresh project_dependent_repos view'
+  task refresh_project_dependent_repos_view: :environment do
+    exit if ENV['READ_ONLY'].present?
+    ProjectDependentRepository.refresh
+  end
+
+  supported_platforms = ['Maven', 'npm', 'Bower', 'PyPI', 'Rubygems', 'Packagist']
+
+  desc 'Create maintenance stats for projects'
+  task :create_maintenance_stats, [:number_to_sync] => :environment do |_task, args|
+    exit if ENV['READ_ONLY'].present?
+    number_to_sync = args.number_to_sync || 2000
+    Project.no_existing_stats.where(platform: supported_platforms).limit(number_to_sync).each(&:update_maintenance_stats_async)
+  end
+
+  desc 'Update maintenance stats for projects'
+  task :update_maintenance_stats, [:number_to_sync] => :environment do |_task, args|
+    exit if ENV['READ_ONLY'].present?
+    number_to_sync = args.number_to_sync || 2000
+    Project.least_recently_updated_stats.where(platform: supported_platforms).limit(number_to_sync).each{|project| project.update_maintenance_stats_async(priority: :low)}
+  end
+
+  desc 'Set license_normalized flag'
+  task set_license_normalized: :environment do
+    supported_platforms = ["Maven", "NPM", "Pypi", "Rubygems", "NuGet", "Packagist"]
+    Project.where(platform: supported_platforms, license_normalized: false).find_in_batches do |group|
+      group.each do |project|
+        project.normalize_licenses
+        # check if we set a new value
+        if project.license_normalized_changed?
+          # update directly to skip any callbacks
+          project.update_column(:license_normalized, project.license_normalized)
+        end
+      end
+    end
+  end
+
+  desc 'Backfill old version licenses'
+  task :backfill_old_version_licenses, [:name, :platform] => :environment do |_task, args|
+    exit if ENV['READ_ONLY'].present?
+    LicenseBackfillWorker.perform_async(args.platform, args.name)
+  end
+
+  desc 'Batch backfill old licenses'
+  task :batch_backfill_old_version_licenses, [:platform] => :environment do |_task, args|
+    projects = Project.where(platform: args.platform).joins(:versions).where("versions.original_license IS NULL").limit(15000).uniq
+    projects.each do |project|
+      LicenseBackfillWorker.perform_async(project.platform, project.name)
+    end
+  end
+
+  desc 'Batch backfill conda'
+  task backfill_conda: :environment do
+    projects = PackageManager::Conda.all_projects
+    projects.keys.each do |project_name|
+      project = Project.find_by(platform: "Conda", name: project_name)
+      if project.nil?
+        PackageManager::Conda.update(project_name)
+      elsif project.versions.count != projects[project_name]["versions"].count
+        PackageManager::Conda.update(project_name)
+        LicenseBackfillWorker.perform_async("Conda", project_name)
+      else
+        LicenseBackfillWorker.perform_async("Conda", project_name)
+      end
+    end
+  end
+
+  desc 'Update Go Base Modules'
+  task :update_go_base_modules, [:version] => :environment do |_task, args|
+    # go through versioned module names and rerun update on them to get their versions
+    # added to the base module Project
+    Project.where(platform: "Go").where("name like ?", "%/v#{args[:version]}").find_in_batches do |projects|
+      projects.each do |project|
+        matches = PackageManager::Go::VERSION_MODULE_REGEX.match(project.name)
+        Project.find_or_create_by(platform: "Go", name: matches[1])
+        PackageManagerDownloadWorker.perform_async("PackageManager::Go", project.name)
+        puts "Queued #{project.name} for update"
+      end
+    end
+  end
+
+  desc 'Verify Go Projects'
+  task :verify_go_projects, [:count] => :environment do |_task, args|
+    args.with_defaults(count: 1000)
+
+    start_id = REDIS.get("go:update:latest_updated_id").presence || 0
+    puts "Start id: #{start_id}, limit: #{args[:count]}."
+    projects = Project
+      .where(platform: "Go")
+      .where("id > ?", start_id)
+      .order(:id)
+      .limit(args[:count])
+
+    if projects.count.zero?
+      puts "Done!"
+      exit
+    else
+      projects
+        .each { |p| GoProjectVerificationWorker.perform_async(p.name) }
+      REDIS.set("go:update:latest_updated_id", projects.last.id)
     end
   end
 end

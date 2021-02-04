@@ -1,11 +1,14 @@
+# frozen_string_literal: true
+
 module PackageManager
   class NPM < Base
     HAS_VERSIONS = true
     HAS_DEPENDENCIES = true
     BIBLIOTHECARY_SUPPORT = true
     SECURITY_PLANNED = true
-    URL = 'https://www.npmjs.com'
-    COLOR = '#f1e05a'
+    URL = "https://www.npmjs.com"
+    COLOR = "#f1e05a"
+    ENTIRE_PACKAGE_CAN_BE_DEPRECATED = true
 
     def self.package_link(project, _version = nil)
       "https://www.npmjs.com/package/#{project.name}"
@@ -20,7 +23,7 @@ module PackageManager
     end
 
     def self.formatted_name
-      'npm'
+      "npm"
     end
 
     def self.project_names
@@ -28,7 +31,7 @@ module PackageManager
     end
 
     def self.recent_names
-      u = 'http://registry.npmjs.org/-/rss?descending=true&limit=50'
+      u = "http://registry.npmjs.org/-/rss?descending=true&limit=50"
       SimpleRSS.parse(get_raw(u)).items.map(&:title).uniq
     end
 
@@ -36,60 +39,77 @@ module PackageManager
       get("http://registry.npmjs.org/#{name.gsub('/', '%2F')}")
     end
 
-    def self.mapping(project)
-      return false unless project["versions"].present?
-      latest_version = project["versions"].to_a.last[1]
-
-      repo = latest_version.fetch('repository', {})
-      repo = repo[0] if repo.is_a?(Array)
-      repo_url = repo.try(:fetch, 'url', nil)
+    def self.deprecation_info(name)
+      last_version = project(name)["versions"].values.last
 
       {
-        :name => project["name"],
-        :description => latest_version["description"],
-        :homepage => project["homepage"],
-        :keywords_array => Array.wrap(latest_version.fetch("keywords", [])),
-        :licenses => licenses(latest_version),
-        :repository_url => repo_fallback(repo_url, project["homepage"]),
-        :versions => project["versions"]
+        is_deprecated: !!last_version["deprecated"],
+        message: last_version["deprecated"],
+      }
+    end
+
+    def self.mapping(project)
+      return false unless project["versions"].present?
+
+      latest_version = project["versions"].to_a.last[1]
+
+      repo = latest_version.fetch("repository", {})
+      repo = repo[0] if repo.is_a?(Array)
+      repo_url = repo.try(:fetch, "url", nil)
+
+      {
+        name: project["name"],
+        description: latest_version["description"],
+        homepage: project["homepage"],
+        keywords_array: Array.wrap(latest_version.fetch("keywords", [])),
+        licenses: licenses(latest_version),
+        repository_url: repo_fallback(repo_url, project["homepage"]),
+        versions: project["versions"],
       }
     end
 
     def self.licenses(latest_version)
-      license = latest_version.fetch('license', nil)
+      license = latest_version.fetch("license", nil)
       if license.present?
         if license.is_a?(Hash)
-          return license.fetch('type', '')
+          license.fetch("type", "")
         else
-          return license
+          license
         end
       else
-        licenses = Array(latest_version.fetch('licenses', []))
+        licenses = Array(latest_version.fetch("licenses", []))
         licenses.map do |lice|
           if lice.is_a?(Hash)
-            lice.fetch('type', '')
+            lice.fetch("type", "")
           else
             lice
           end
-        end.join(',')
+        end.join(",")
       end
     end
 
-    def self.versions(project)
-      project['versions'].map do |k, v|
+    def self.versions(project, _name)
+      # npm license fields are supposed to be SPDX expressions now https://docs.npmjs.com/files/package.json#license
+      return [] if project.nil?
+      project.fetch("versions", {}).map do |k, v|
+        license = v.fetch("license", nil)
+        license = licenses(v) unless license.is_a?(String)
+        license = "" if license.nil?
         {
-          :number => k,
-          :published_at => project.fetch('time', {}).fetch(k, nil)
+          number: k,
+          published_at: project.fetch("time", {}).fetch(k, nil),
+          original_license: license,
         }
       end
     end
 
-    def self.dependencies(name, version, project)
-      vers = project[:versions][version]
+    def self.dependencies(_name, version, project)
+      vers = project.fetch(:versions, {})[version]
       return [] if vers.nil?
-      map_dependencies(vers.fetch('dependencies', {}), 'runtime') +
-      map_dependencies(vers.fetch('devDependencies', {}), 'Development') +
-      map_dependencies(vers.fetch('optionalDependencies', {}), 'Optional', true)
+
+      map_dependencies(vers.fetch("dependencies", {}), "runtime") +
+        map_dependencies(vers.fetch("devDependencies", {}), "Development") +
+        map_dependencies(vers.fetch("optionalDependencies", {}), "Optional", true)
     end
   end
 end

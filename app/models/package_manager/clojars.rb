@@ -1,55 +1,34 @@
+# frozen_string_literal: true
+
 module PackageManager
-  class Clojars < Base
+  class Clojars < Maven
     HAS_VERSIONS = true
     HAS_DEPENDENCIES = false
     BIBLIOTHECARY_SUPPORT = true
-    URL = 'https://clojars.org'
-    COLOR = '#db5855'
+    URL = "https://clojars.org"
+    COLOR = "#db5855"
+    NAME_DELIMITER = "/"
 
     def self.package_link(project, version = nil)
       "https://clojars.org/#{project.name}" + (version ? "/versions/#{version}" : "")
     end
 
+    def self.repository_base
+      "https://repo.clojars.org"
+    end
+
     def self.project_names
-      @names ||= get("https://clojars.libraries.io/packages.json").keys
+      get("https://maven.libraries.io/clojars/all")
     end
 
     def self.recent_names
-      get_html("https://clojars.org/").css('.recent-jar-title a').map(&:text)
+      get("https://maven.libraries.io/clojars/recent")
     end
 
-    def self.projects
-      @projects ||= begin
-        projs = {}
-        get("https://clojars.libraries.io/feed.json").each do |k,v|
-          v.each do |proj|
-            group = proj['group-id']
-            key = (group == k ? k : "#{group}/#{k}")
-            projs[key] = proj
-          end
-        end
-        projs
-      end
-    end
-
-    def self.project(name)
-      projects[name.downcase].merge(name: name)
-    end
-
-    def self.mapping(project)
-      {
-        :name => project[:name],
-        :description => project["description"],
-        :repository_url => repo_fallback(project["scm"]["url"], '')
-      }
-    end
-
-    def self.versions(project)
-      project['versions'].map do |v|
-        {
-          :number => v
-        }
-      end
+    def self.download_url(name, version = nil)
+      group_id, artifact_id = name.split("/", 2)
+      artifact_id = group_id if artifact_id.nil?
+      MavenUrl.new(group_id, artifact_id, repository_base, NAME_DELIMITER).jar(version)
     end
   end
 end

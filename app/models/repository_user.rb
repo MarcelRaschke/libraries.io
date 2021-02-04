@@ -4,12 +4,12 @@ class RepositoryUser < ApplicationRecord
   has_many :source_repositories, -> { where fork: false }, anonymous_class: Repository
   has_many :open_source_repositories, -> { where fork: false, private: false }, anonymous_class: Repository
   has_many :dependencies, through: :open_source_repositories
-  has_many :favourite_projects, -> { group('projects.id').order("COUNT(projects.id) DESC, projects.rank DESC") }, through: :dependencies, source: :project
+  has_many :favourite_projects, -> { group('projects.id').order(Arel.sql("COUNT(projects.id) DESC, projects.rank DESC")) }, through: :dependencies, source: :project
   has_many :all_dependent_repos, -> { group('repositories.id') }, through: :favourite_projects, source: :repository
   has_many :contributed_repositories, -> { Repository.source.open_source }, through: :contributions, source: :repository
   has_many :contributed_projects, through: :contributed_repositories, source: :projects
-  has_many :contributors, -> { group('repository_users.id').order("sum(contributions.count) DESC") }, through: :open_source_repositories, source: :contributors
-  has_many :fellow_contributors, -> (object){ where.not(id: object.id).group('repository_users.id').order("COUNT(repository_users.id) DESC") }, through: :contributed_repositories, source: :contributors
+  has_many :contributors, -> { group('repository_users.id').order(Arel.sql("sum(contributions.count) DESC")) }, through: :open_source_repositories, source: :contributors
+  has_many :fellow_contributors, -> (object){ where.not(id: object.id).group('repository_users.id').order(Arel.sql("COUNT(repository_users.id) DESC")) }, through: :contributed_repositories, source: :contributors
   has_many :projects, through: :open_source_repositories
   has_many :identities
 
@@ -18,7 +18,7 @@ class RepositoryUser < ApplicationRecord
 
   has_many :issues
 
-  validate :login_uniqueness_with_case_insenitive_host, if: lambda { self.login_changed? }
+  validate :login_uniqueness_with_case_insensitive_host, if: lambda { self.login_changed? }
   validates :uuid, uniqueness: {scope: :host_type}, if: lambda { self.uuid_changed? }
   validates :uuid, presence: true
 
@@ -33,7 +33,7 @@ class RepositoryUser < ApplicationRecord
            :to_s, :to_param, :github_id, :download_user_from_host, :download_orgs,
            :download_user_from_host_by_login, :download_repos, :check_status, to: :repository_owner
 
- def login_uniqueness_with_case_insenitive_host
+ def login_uniqueness_with_case_insensitive_host
    if RepositoryUser.host(host_type).login(login).exists?
      errors.add(:login, "must be unique")
    end
@@ -80,6 +80,10 @@ class RepositoryUser < ApplicationRecord
     async_sync
     self.last_synced_at = Time.zone.now
     save
+  end
+
+  def hide
+    update!(hidden: true)
   end
 
   def self.create_from_host(host_type, user_hash)

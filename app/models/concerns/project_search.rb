@@ -6,12 +6,13 @@ module ProjectSearch
 
     index_name "projects-#{Rails.env}"
 
-    FIELDS = ['name^2', 'exact_name^2', 'repo_name', 'description', 'homepage', 'language', 'keywords_array', 'normalized_licenses', 'platform']
+    FIELDS = ['name^2', 'exact_name^2', 'extra_searchable_names^2', 'repo_name', 'description', 'homepage', 'language', 'keywords_array', 'normalized_licenses', 'platform']
 
     settings index: { number_of_shards: 3, number_of_replicas: 1 } do
       mapping do
         indexes :name, type: 'string', :analyzer => 'snowball', :boost => 6
         indexes :exact_name, type: 'string', :index => :not_analyzed, :boost => 2
+        indexes :extra_searchable_names, type: 'string', :index => :not_analyzed, :boost => 2
 
         indexes :description, type: 'string', :analyzer => 'snowball'
         indexes :homepage, type: 'string'
@@ -40,7 +41,7 @@ module ProjectSearch
     after_commit lambda { __elasticsearch__.delete_document rescue nil },  on: :destroy
 
     def as_indexed_json(_options = {})
-      as_json(methods: [:stars, :repo_name, :exact_name, :contributions_count, :dependent_repos_count]).merge(keywords_array: keywords)
+      as_json(methods: [:stars, :repo_name, :exact_name, :extra_searchable_names, :contributions_count, :dependent_repos_count]).merge(keywords_array: keywords)
     end
 
     def dependent_repos_count
@@ -49,6 +50,29 @@ module ProjectSearch
 
     def exact_name
       name
+    end
+
+    def extra_searchable_names
+      if platform == "Maven"
+        name.split(":")
+      elsif platform == "Clojars"
+        name.split("/")
+      else
+        []
+      end
+    end
+
+    def marshal_dump
+      instance_variables.reject{|m| :__elasticsearch__ == m}.inject({}) do |vars, attr|
+        vars[attr] = instance_variable_get(attr)
+        vars
+      end
+    end
+
+    def marshal_load(hash)
+      hash.each do |attr, value|
+        instance_variable_set(attr, value)
+      end
     end
 
     def self.facets(options = {})
@@ -134,9 +158,8 @@ module ProjectSearch
       }
     end
 
-    def self.search(original_query, options = {})
+    def self.search(query, options = {})
       facet_limit = options.fetch(:facet_limit, 36)
-      query = sanitize_query(original_query)
       options[:filters] ||= []
       search_definition = {
         query: {
@@ -220,27 +243,6 @@ module ProjectSearch
       filters.select { |k, v| v.present? && k != except }.map do |k, v|
         Array(v).map { { terms: { k => v.split(',') } } }
       end
-    end
-
-    def self.sanitize_query(str)
-      return '' if str.blank?
-      # Escape special characters
-      # http://lucene.apache.org/core/old_versioned_docs/versions/2_9_1/queryparsersyntax.html#Escaping Special Characters
-      escaped_characters = Regexp.escape('\\+-&|/!(){}[]^~?:')
-      str = str.gsub(/([#{escaped_characters}])/, '\\\\\1')
-
-      # AND, OR and NOT are used by lucene as logical operators. We need
-      # to escape them
-      ['AND', 'OR', 'NOT'].each do |word|
-        escaped_word = word.split('').map {|char| "\\#{char}" }.join('')
-        str = str.gsub(/\s*\b(#{word.upcase})\b\s*/, " #{escaped_word} ")
-      end
-
-      # Escape odd quotes
-      quote_count = str.count '"'
-      str = str.gsub(/(.*)"(.*)/, '\1\"\3') if quote_count % 2 == 1
-
-      str
     end
 
     def self.facet_filter(name, limit, options)

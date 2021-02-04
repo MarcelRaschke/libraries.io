@@ -149,6 +149,10 @@ module RepositoryHost
       nil
     end
 
+    def retrieve_commits(token = nil)
+      api_client(token).commits(repository.full_name)
+    end
+
     def download_owner
       return if repository.owner && repository.repository_user_id && repository.owner.login == repository.owner_name
       o = api_client.user(repository.owner_name)
@@ -221,10 +225,55 @@ module RepositoryHost
       repository.tags.create(tag_hash)
     end
 
+    def gather_maintenance_stats
+      if repository.host_type != "GitHub" || repository.projects.any? { |project| project.github_name_with_owner.blank? }
+        repository.repository_maintenance_stats.destroy_all
+        return []
+      end
+
+      exists = !Github.fetch_repo(repository.full_name).nil?
+      repository.download_issues
+      repository.download_pull_requests
+
+      # use api_client methods?
+      v4_client = AuthToken.v4_client
+      v3_client = AuthToken.client({auto_paginate: false})
+      now = DateTime.current
+
+      metrics = []
+
+      result = MaintenanceStats::Queries::Github::RepoReleasesQuery.new(v4_client).query( params: {owner: repository.owner_name, repo_name: repository.project_name, end_date: now - 1.year} )
+      metrics << MaintenanceStats::Stats::Github::ReleaseStats.new(result).get_stats
+
+      result = MaintenanceStats::Queries::Github::CommitCountQuery.new(v4_client).query(params: {owner: repository.owner_name, repo_name: repository.project_name, start_date: now} )
+      metrics << MaintenanceStats::Stats::Github::CommitsStat.new(result).get_stats unless check_for_v4_error_response(result)
+
+      begin
+        result = MaintenanceStats::Queries::Github::RepositoryContributorStatsQuery.new(v3_client).query(params: {full_name: repository.full_name})
+        metrics << MaintenanceStats::Stats::Github::V3ContributorCountStats.new(result).get_stats
+      rescue Octokit::Error => e
+        Rails.logger.warn(e.message)
+      end
+
+      metrics << MaintenanceStats::Stats::Github::DBIssueStats.new(repository.issues).get_stats if exists
+
+      add_metrics_to_repo(metrics)
+
+      metrics
+    end
+
     private
 
     def api_client(token = nil)
       AuthToken.fallback_client(token)
+    end
+
+    def check_for_v4_error_response(response)
+      # errors can be stored in the response from Github or can be stored in the response object from HTTP errors
+      response.errors.messages.each(&Rails.logger.method(:warn)) if response.errors.present?
+      response.data.errors.messages.each(&Rails.logger.method(:warn)) if response.data&.errors.present?
+      # if we have either type of error or there is no data return true
+      return response.data.nil? || response.errors.any? || response.data.errors.any?
     end
   end
 end

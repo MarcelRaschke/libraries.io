@@ -36,7 +36,11 @@ module RepositoryOwner
       return if owner.org?
 
       # GitLab doesn't have an API to get a users public group memberships so we scrape it instead
-      groups_html = Nokogiri::HTML(PackageManager::Base.get_json("https://gitlab.com/users/#{owner.login}/groups")['html'])
+      json = get_json("https://gitlab.com/users/#{owner.login}/groups")
+
+      return if json.nil?
+      groups_html = Nokogiri::HTML(json['html'])
+      return if groups_html.nil?
       links = groups_html.css('a.group-name').map{|l| l['href'][1..-1]}.compact
 
       links.each do |org_login|
@@ -49,10 +53,14 @@ module RepositoryOwner
 
     def download_repos
       if owner.org?
-        repos = api_client.group_projects(owner.login).map(&:full_name)
+        repos = api_client.group_projects(owner.login).map(&:path_with_namespace)
       else
         # GitLab doesn't have an API to get a users public projects so we scrape it instead
-        projects_html = Nokogiri::HTML(PackageManager::Base.get_json("https://gitlab.com/users/#{owner.login}/projects")['html'])
+        json = get_json("https://gitlab.com/users/#{owner.login}/projects")
+
+        return if json.nil?
+        projects_html = Nokogiri::HTML(json['html'])
+        return if projects_html.nil?
         repos = projects_html.css('a.project').map{|l| l['href'][1..-1] }.uniq.compact
       end
 
@@ -68,7 +76,7 @@ module RepositoryOwner
       return unless owner.org?
 
       api_client.group_members(owner.login).each do |org|
-        RepositoryCreateUserWorker.perform_async('GitLab', org.login)
+        RepositoryCreateUserWorker.perform_async('GitLab', org.username)
       end
       true
     rescue *RepositoryHost::Gitlab::IGNORABLE_EXCEPTIONS
@@ -156,6 +164,15 @@ module RepositoryOwner
 
       org.update(org_hash.slice(:name, :blog, :location))
       org
+    end
+
+    private
+
+    def get_json(url)
+      r = Typhoeus::Request.new(url,
+        method: :get,
+        headers: { 'Accept' => 'application/json' }).run
+      Oj.load(r.body)
     end
   end
 end

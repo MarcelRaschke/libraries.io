@@ -1,6 +1,6 @@
 <% if ENV['READ_ONLY'].present? %>
   <div class='alert alert-danger'>
-    The site is in <strong>read-only</strong> mode whilst we perform some maintainence, you won't be able to log in at this time. See our <a href="https://twitter.com/librariesio">Twitter Account</a> for updates.
+    The site is in <strong>read-only</strong> mode whilst we perform some maintenance, you won't be able to log in at this time. See our <a href="https://twitter.com/librariesio">Twitter Account</a> for updates.
   </div>
 <% end %>
 
@@ -48,13 +48,7 @@
 
 <% if flash.empty? %>
   <div class="alert alert-info hidden-xs" role="alert" style="background-color: #F6914D; border-color: #F6914D; color: white;">
-    Tidelift has over $1 million dollars available to pay open source maintainers.
-    If you're a maintainer:
-    <strong>
-      <a href="https://tidelift.com/about/lifter" target="_blank"
-                 style="text-decoration:underline;color: white;">
-        Find your package.
-      </a>
-    </strong>
+    <img src="<%= image_url('tidelift-small.png') %>" width="36px" style="padding-right: 12px;" />
+    <%= render :file => tidelift_flash_partial %>
   </div>
 <% end %>

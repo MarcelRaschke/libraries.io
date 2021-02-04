@@ -9,6 +9,7 @@ Thanks for considering contributing. These guidelines outline how to contribute 
 [What should I know Before I get started?](#what-should-i-know-before-i-get-started)
 * [Code of conduct](#code-of-conduct)
 * [Language](#language)
+* [Documentation](#documentation)
 * [Installation and setup](#setup)
 
 [How can I contribute?](#how-can-i-contribute)
@@ -37,12 +38,12 @@ By outlining our [mission and strategy](/strategy.md) we hope to give you more p
 * Maintainability: _Helping maintainers understand more about the software they depend upon and the consumers of their software._
 * Sustainability: _Supporting undervalued software by highlighting shortfalls in contribution and funneling support to them._
 
-The first of these problems is our foccus for Libraries.io. The other two we are trying to tackle at [Tidelift](https://tidelift.com).
+The first of these problems is our focus for Libraries.io. The other two we are trying to tackle at [Tidelift](https://tidelift.com).
 
 ## Who is Libraries.io For?
 Libraries.io currently caters for the needs of three distinct user groups:
 
-* Google: _is hungry for your linked datas so she can serve you up search traffic_
+* Google: _is hungry for your linked data so she can serve you up search traffic_
 * Searcher: _is a developer with a problem, she is looking for something to help solve it._
 * Maintainer: _has a project that is used within and/or incorporates open dependencies. She needs to ensure her project(s) are working as expected for users._
 
@@ -51,7 +52,7 @@ These groups have been expanded into [personas](/personas.md) for contributors t
 ## What Should I Know Before I Get Started?
 
 ### Code of Conduct
-Libraries.io is an open and inclusive [community of people](https://github.com/orgs/librariesio/people) working together. We expect contributors to abide by our [contributor code of conduct](CODE_OF_CONDUCT.md) which basically say 'be excellent to each other'. Please report unacceptable behavior to conduct@libraries.io
+Libraries.io is an open and inclusive [community of people](https://github.com/orgs/librariesio/people) working together. We expect contributors to abide by our [contributor code of conduct](https://github.com/librariesio/libraries.io/blob/main/CODE_OF_CONDUCT.md) which basically say 'be excellent to each other'. Please report unacceptable behavior to conduct@libraries.io
 
 ### Language
 We communicate predominately in English. Contributions to the project should be made with English as the first language. We are happy for members of the community to communicate in a language other than English in chat, email and video but be aware that this might be considered exclusive by other members of the community.
@@ -60,7 +61,7 @@ We communicate predominately in English. Contributions to the project should be 
 Documentation for the project as a whole is available at [docs.libraries.io](https://docs.libraries.io). These pages are generated from the [documentation](https://github.com/librariesio/documentation) repo. Documentation that needs to be in every repo is replicated in [required-files](https://github.com/librariesio/required-files) (currently limited to [GitHub templates](https://github.com/blog/2111-issue-and-pull-request-templates)). Otherwise documentation will be specific to that repo. For example the main [Libraries.io](https://github.com/librariesio/libraries.io) `README.md` contains information about installing and running the main rails application.
 
 ### Setup
-If you wish to make contributions to Libraries.io then you'll need a local version of the site to test. You can find instructions to install the correct Ruby version, Postgres, and to set up the database in our [README](https://github.com/librariesio/libraries.io/blob/master/README.md#getting-started).
+If you wish to make contributions to Libraries.io then you'll need a local version of the site to test. You can find instructions to install the correct Ruby version, Postgres, and to set up the database in our [README](https://github.com/librariesio/libraries.io/blob/main/README.md#getting-started).
 
 ## How Can I Contribute?
 
@@ -73,7 +74,7 @@ The simplest thing that you can do to help us is by filing good bug reports, so 
 * Double-check that the bug is persistent. The site is still in it's infancy and sometimes artifacts may appear and disappear.
 * Double-check the bug hasn't already been reported [on our issue tracker](https://github.com/search?utf8=%E2%9C%93&q=is%3Aopen+is%3Aissue+org%3Alibrariesio), they *should* be labelled `bug` or `bugsnag`.
 
-If something hasn't been raised, you can go ahead and create a new issue using [the template](/issue_template.md). If you'd like to help investigate further or fix the bug just mention it in your issue and check out our [workflow](#workflow).
+If something hasn't been raised, you can go ahead and create a new issue using [the template](/.github/ISSUE_TEMPLATE.md). If you'd like to help investigate further or fix the bug just mention it in your issue and check out our [workflow](#workflow).
 
 ### Suggesting Enhancements
 
@@ -83,7 +84,7 @@ The next simplest thing you can do to help us is by telling us how we can improv
 
 * Check that the enhancement is not already [in our issue tracker](https://github.com/search?utf8=%E2%9C%93&q=is%3Aopen+is%3Aissue+org%3Alibrariesio), they should be labelled 'enhancement'.
 
-If there isn't already an issue for feature then go ahead and create a new issue for it using the [template](/issue_template.md). If you'd like to work on the enhancement then just mention it in a comment and check out our [workflow](#workflow).
+If there isn't already an issue for a feature then go ahead and create a new issue for it using the [template](/.github/ISSUE_TEMPLATE.md). If you'd like to work on the enhancement then just mention it in a comment and check out our [workflow](#workflow).
 
 ### Suggesting New Features
 
@@ -94,7 +95,7 @@ If you're into this zone then you need to understand a little more about what we
 * Check that it aligns with [our strategy](strategy.md) and is specifically not in line with something we have said we will not do (for the moment this is anything to do with ranking *people*).
 * Check that the feature is not already [in our issue tracker](https://github.com/search?utf8=%E2%9C%93&q=is%3Aopen+is%3Aissue+org%3Alibrariesio), they should be tagged 'feature'.
 
-If you're still thinking about that killer feature that no one else is thinking about then *please* create an issue for it using the [template](/issue_template.md).
+If you're still thinking about that killer feature that no one else is thinking about then *please* create an issue for it using the [template](/.github/ISSUE_TEMPLATE.md).
 
 ### Your First Contribution
 You're in luck! We label issues that are ideal for first time contributors with [`first-pr`](https://github.com/search?l=&q=is%3Aopen+is%3Aissue+org%3Alibrariesio+label%3Afirst-pr&ref=advsearch&type=Issues&utf8=%E2%9C%93). For someone who wants something a little more meaty you might find an issue that needs some assistance with [`help wanted`](https://github.com/search?utf8=%E2%9C%93&q=is%3Aopen+is%3Aissue+org%3Alibrariesio+label%3A%22help+wanted%22&type=Issues). Next you'll want to read our [workflow](#workflow).
@@ -119,7 +120,7 @@ We try to use the following channels accordingly:
 * `#events` is used to share and discuss events that may be of interest to or attended by members of the community
 * `#activity` contains notifications from the various platforms that we use to keep the Libraries.io project turning. Including notifications from GitHub, Twitter and our servers.
 
-Members are encouraged to openly discuss their work, their lives, share views and ask for help using chat. It should be considered a *safe space* in which there is *no such thing as a stupid question*. Conversely no one contributor should ever be expected to have read something said in a chat. If someone should know something then it should be written down as an issue and/or documented in an obvious place for others to find.  
+Members are encouraged to openly discuss their work, their lives, share views and ask for help using chat. It should be considered a *safe space* in which there is *no such thing as a stupid question*. Conversely no one contributor should ever be expected to have read something said in a chat. If someone should know something then it should be written down as an issue and/or documented in an obvious place for others to find.
 
 ### Video
 [Google Hangouts](http://hangouts.google.com) is our preferred tool for video chat. We operate an [open hangout](http://bit.ly/2kWtYak) for anyone to jump into at any time to discuss issues face to face.
@@ -160,7 +161,7 @@ In general we use [GitHub](https://help.github.com/) and [Git](https://git-scm.c
 We prefer that contributors fork the project in order to contribute.
 
 #### Branching
-We *try* to use principles of [GitHub-flow](https://lucamezzalira.com/2014/03/10/git-flow-vs-github-flow/) in our branching model. That is the `master` branch will always be deployable to the live site, and that every branch from that will be used to add a feature, fix a bug, improve something or otherwise represent an atomic unit of work.
+We *try* to use principles of [GitHub-flow](https://lucamezzalira.com/2014/03/10/git-flow-vs-github-flow/) in our branching model. That is the `main` branch will always be deployable to the live site, and that every branch from that will be used to add a feature, fix a bug, improve something or otherwise represent an atomic unit of work.
 
 #### Ticketing
 We *try* to create an issue for everything. That is any bug, feature or enhancement that is worth an open, focussed and documented discussion.
@@ -169,7 +170,7 @@ We *try* to create an issue for everything. That is any bug, feature or enhancem
 We constrain labels as they are a key part of our workflow. Tickets will be labeled according to our [labelling policy](/labelling.md).
 
 #### Templates
-We use templates to guide contributors toward good practice in [filing bugs, requesting enhancements and features](/issue_template.md) and in [issuing pull-requests](/pull_request_template.md).
+We use templates to guide contributors toward good practice in [filing bugs, requesting enhancements and features](https://github.com/librariesio/libraries.io/blob/main/.github/ISSUE_TEMPLATE.md) and in [issuing pull-requests](https://github.com/librariesio/libraries.io/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 
 #### Commenting
 If it is possible to comment your contribution — for instance if you are contributing code — then do so in a way that is simple, clear, concise and lowers the level of understanding necessary for others to comprehend what comes afterward. If you are contributing code it is very likely it will be rejected if it does not contain sufficient comments.
@@ -189,7 +190,7 @@ It is likely that your contributions will need to be checked by at least one mem
 We appreciate that it may be difficult to offer constructive criticism, but it is a necessary part of ensuring the project is maintainable and successful. If it is difficult to understand something, request it is better documented and/or commented. If you do not feel assured of the robustness of a contribution, request it is better tested. If it is unclear what the goal of the piece of work is and how it relates to the [strategy](/strategy.md), request a clarification in the corresponding issue. If a pull-request has no corresponding issue, decreases test coverage or otherwise decreases the quality of the project. Reject it. Otherwise, merge it.
 
 #### Merging
-As we keep the `master` branch in a permanent state of 'deployment ready' once-merged your contribution will be live on the next deployment.
+As we keep the `main` branch in a permanent state of 'deployment ready' once-merged your contribution will be live on the next deployment.
 
 #### Deploying
 Any member of the [deployers](https://github.com/orgs/librariesio/teams/deployers) team are able to redeploy the site. If you require a deployment then you might find one of them in our `#general` [chat channel on Slack](slack.libraries.io).
