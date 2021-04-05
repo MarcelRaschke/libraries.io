@@ -87,7 +87,7 @@ gem 'bootsnap', require: false
 
 group :development do
   gem 'spring'
-  gem 'sql_queries_count'
+  gem 'sql_queries_count', '>= 0.0.1'
   gem 'brakeman', :require => false
   gem 'capistrano'
   gem 'capistrano-rails'
