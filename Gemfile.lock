@@ -277,7 +277,7 @@ GEM
       mime-types-data (~> 3.2015)
     mime-types-data (3.2016.0521)
     mini_mime (1.0.0)
-    mini_portile2 (2.3.0)
+    mini_portile2 (2.5.0)
     minitest (5.11.3)
     mize (0.3.5)
       protocol
@@ -291,8 +291,9 @@ GEM
       net-ssh (>= 2.6.5)
     net-ssh (5.0.2)
     nio4r (2.3.1)
-    nokogiri (1.8.3)
-      mini_portile2 (~> 2.3.0)
+    nokogiri (1.11.0)
+      mini_portile2 (~> 2.5.0)
+      racc (~> 1.4)
     oauth (0.5.6)
     oauth2 (1.4.0)
       faraday (>= 0.8, < 0.13)
@@ -355,6 +356,7 @@ GEM
       method_source (~> 0.9.0)
     public_suffix (3.0.2)
     puma (3.11.4)
+    racc (1.5.2)
     rack (2.0.5)
     rack-attack (5.3.2)
       rack
